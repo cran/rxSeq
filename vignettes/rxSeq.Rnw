@@ -1,0 +1,243 @@
+% \VignetteIndexEntry{rxSeq manual}
+% \VignetteDepends{rxSeq}
+% \VignetteKeywords{Expression Analysis of the reciprocal cross in RNA-seq data}
+% \VignettePackage{rxSeq}
+
+\documentclass[11pt, a4paper]{article}
+ \setlength{\topmargin}{-0.2in}
+ \setlength{\oddsidemargin}{0.05 in}
+ \setlength{\textwidth}{6in}
+ \setlength{\textheight}{9in}
+ \headsep=0in
+ \oddsidemargin=0in \evensidemargin=0in
+
+
+\title{Reciprocal Cross in RNA-seq}
+
+\author{Vasyl Zhabotynsky \thanks{vasyl@unc.edu} \and Wei Sun \and Fei Zou}
+
+
+\begin{document}
+
+\maketitle 
+
+\section{Overview}
+\label{sec:over}
+This vignette describes how to use \texttt{R/rxSeq} to perform an analysis on 
+RNA-seq data 
+from F1 reciprocal crosses.
+<<initialize, results=hide>>=
+library(rxSeq)
+@
+<<echo=FALSE, results=hide>>=
+options(width = 80)
+@
+
+
+\section{Introduction}
+\label{sec:intro}
+RNA sequencing (RNA-seq) not only measures total gene expression but may also measure allele-specific gene expression in 
+diploid individuals. RNA-seq data collected from F1 reciprocal crosses (and respective inbred) in mouse can powerfully dissect strain and 
+parent-of-origin effects on allelic imbalance of gene expression. This R package, rxSeq, implements a novel 
+statistical approach for RNA-seq data from F1 and inbred strains. Zou {\em et al.} (2014) [\cite{Zou13}]
+~\\
+The package allows to fit the joint model of the total read counts for each mouse (assuming Negatvie-Binomial model to allow for an overdispersion) and allele specific counts (Beta-Binomial model).
+In the provided data example these counts are aggregated on gene level, though as long as counts are not too small, any level of generalization can be used: transcript level, exon level, etc.
+
+\section{Citing \texttt{R/rxSeq}}
+When using the results from the \texttt{R/rxSeq} package, please cite:
+\begin{quote}
+Zou, Fei, Wei Sun, James J. Crowley, Vasyl Zhabotynsky, Patrick F. Sullivan, and Fernando Pardo-Manuel de Villena (2014), {A novel statistical approach for jointly analyzing RNA-Seq data from F1 reciprocal crosses and inbred lines.} {\em Genetics} {\bf197}{(1)}:389-399
+\end{quote}
+The article describes the methodological framework behind the \texttt{R/rxSeq} package.
+
+
+\section{rxSeq implementation and output}
+\label{sec:imp}
+\subsection{Fitting the data}
+\subsubsection{Joint model (TReCASE model) for total read counts (TReC) and allele specific expression (ASE) counts}
+The package \texttt{R/rxSeq} was developed for analyzing RNA-seq data from F1 reciprocal mouse crosses (2013)[\cite{Crowley13}] based on development of Collaborative Cross mouse model [\cite{CC12}]. 
+The model aimes to combine the total read counts (TReC) and allele specific expression (ASE) counts, estimate simultaneously additive strain effect, parent of origin effect, as well as taking in account dominance effect, sex effect and adjust for individual total level of expression of a mouse.
+At the same time, model allows to reduce type II error by estimating overdispersion of the count data.
+One of the packages allowing to produce TReC as well as ASE data is the R package \texttt{R/asSeq}[\cite{asSeq}] developed by our group or using Genomic Alignment [\cite{Lawrence13}]. A detailed pipeline of producing gene-level (or transcript-level) allele specific counts can be found in the asSeq document, the general idea is to find the reads which have SNP and indel information using which reads can be classified as allele specific (ASE), as well as count number of reads that overlapped a particular part of a genome - gene level TReC counts.
+
+~\\
+First lets create an input data object for autosomal and X-chromosome genes
+
+<<>>=
+rcA = readCounts(index=data.A$index, y=data.A$y[1:2,], n=data.A$n[1:2,], 
+        n0B=data.A$n0B[1:2,], kappas=data.A$kappas, geneids=data.A$geneids[1:2])
+rcX = readCounts(index=data.X$index, y=data.X$y[1:2,], n=data.X$n[1:2,], 
+        n0B=data.X$n0B[1:2,], kappas=data.X$kappas, geneids=data.X$geneids[1:2], 
+        tausB=data.X$tausB, chrom="X")
+@
+
+~\\
+For autosomal genes, the full TReCASE model can be fitted as:
+
+<<>>=
+#fit trecase autosome genes:
+trecase.A.out = process(rcA)
+@
+Note, that it requires both TReC and ASE counts, and assumes that mice and genes match in the data matrices.
+
+~\\
+Since the X chromosome is different, in that it has \textit{Xce} effect - proportion of one of the allele expression is not 0.5, but is scewed for the whole chromosome, we need to adjust for it in order to estimate effects correctly.
+The following command runs the TReCASE model for chromsome X genes, which requires two additional parameters for dealing with X-chromosome inactivations: \textit{Xce} effect - proportion of the reads coming from the allele B for the whole X chromosome and which genes have this proportion switched (the well known example is \textit{Xist} gene (it's Ensembl id is provided by default - ENSMUSG00000086503)
+
+<<>>=
+#fit trecase X chromosome genes:
+trecase.X.out = process(rcX)
+@
+
+These functions return the following outputs: parameter estimates from the full models and 
+associated p-values, and all reduced short models, followed by the list of errors:
+<<>>=
+names(trecase.A.out)
+trecase.A.out$pval[,1:2]
+names(trecase.X.out)
+trecase.X.out$pval[,1:2]
+@
+
+We can recalculate negative log likelihood with optional estimation of hessian:
+<<>>=
+nLogLik(res=trecase.A.out, rc=rcA, genei=1)$nll
+nLogLik(res=trecase.X.out, rc=rcX, genei=1)$nll
+@
+
+
+
+%For TReC only counts model the similar input and output are utilized.
+
+\subsubsection{TReC model for TReC only}
+The package also allows to fit the data with only TReC when for a given gene, if there is no enough SNP or indel information 
+for estimating ASE. 
+
+~\\
+~\\
+The following function fits the TReC model for autosomal genes:
+<<>>=
+#fit trec autosome genes
+rcA$model = "short"
+trec.A.out = process(rcA)
+names(trec.A.out)
+trec.A.out$pval[,1:2]
+@
+
+~\\
+Again, the separate treatment of X chromosome is implemented. The following function fits the TReC model for chromosome X genes:
+<<>>=
+#fit trec X chromosome genes
+rcX$model = "short"
+trec.X.out = process(rcX)
+names(trec.X.out)
+trec.X.out$pval[,1:2]
+@
+
+Similarly for short model we also can recalculate negative log likelihood with optional estimation of hessian:
+<<>>=
+nLogLik(res=trec.A.out, rc=rcA, genei=1)$nll
+nLogLik(res=trec.X.out, rc=rcX, genei=1)$nll
+@
+
+\subsection{Estimating \textit{Xce} effect for X chromosome}
+Both proc.trecase.X and proc.trec.X require an estimate of the \textit{Xce} effect.
+In the above examples, we used an estimated value from the data in Crowley at al. (2013) [\cite{Crowley13}]. 
+
+
+~\\
+The following function estimates the \textit{Xce} effect for any given data:
+
+<<>>=
+get.tausB(n=data.X$n, n0B=data.X$n0B, geneids=data.X$geneids,
+          Xist.ID="ENSMUSG00000086503")
+@
+
+For genes that are known to escape X inactivation or have different \textit{Xce} control effects, adjusted analysis can be done 
+provided their ids are given. A default gene - \textit{Xist} which is known to have an opposite inactivation 
+pattern with the other X chromosome genes, we set its estimate to $1-\textit{Xce}$.
+We may also exclude genes with too low ASE (which is set to 50 by default) and/or with too low proportion of one of the alleles. 
+The default value for the latter is set to 0.05 to avoid fully imprinted genes.
+\\
+In order to reliently estimate Xce effect we need to have allele specific data, so if you don't have such information, 
+you may use literature average, and if those are not available, you still can fit the model assuming proportion is 0.5, understanding that it may bias the inference.
+%Note, that even though we used only 8 randomly chosen genes from the set, the resulting \textbf{tausB} are very similar to the full 
+%set estimate:
+
+<<>>=
+data.X$tausB
+@
+
+The first row of the \textbf{get.tausB} output provides a medain estimate of the \textit{Xce} effect 
+and the second row provides an average estimate of \textit{Xce} effect. The
+two estimates are expected to be close, though median would be more stable.
+
+<<>>=
+get.tausB(n=data.X$n,n0B=data.X$n0B,geneids=data.X$geneids,Xist.ID = "")
+@
+
+\section{Simulations}
+\label{sec:sim}
+The TReC and ASE counts can be simulated using function \textbf{simRX} which requires the following input variables:
+
+<<>>=
+dat.A = simRX(b0f=.5, b0m=.6, b1f=.3, b1m=.4, beta_sex=.1, beta_dom=.1, n.simu=1E1)
+names(dat.A)
+dat.X = simRX(b0f=.5, b0m=.6, b1f=.3, b1m=.4, beta_sex=.1, beta_dom=.1, n.simu=1E1,
+is.X=TRUE, tauB=.3)
+names(dat.X)
+@
+
+It produces three data matrices: TReC - \textbf{y}, all ASE counts - \textbf{n} and ASE counts for allele B - \textbf{n0B},
+as well as specifying which mouse belongs to which cross, and what is the overall expression level for each mouse.
+These simulations provide all the required input for the fitting functions.
+
+\section{Function name specification}
+\label{sec:names}
+The essential functions for the package have names reiterating their purpuse:
+\\
+The first part of the name is:
+\begin{enumerate}
+  \item(proc) - process the data, fit the likehood and test the hypotheses of interest and (optionally calculate Hessian matrix at the MLE)
+  \item(nLogLik) - calculate negative log-likelihood at a given point (and, optionally, calculate Hessian matrix)
+\end{enumerate}
+~\\
+the second part is specifies if it is a full or a short model: 
+\begin{enumerate}
+  \item(trecase) - a full model (using TReC and ASE counts)
+  \item(trec) - a short model (using TReC only counts)
+\end{enumerate}
+and the last part is specifying gene from which chromosome the model will fit:
+\begin{enumerate}
+  \item(A) - an autosome
+  \item(X) - X chromosome
+\end{enumerate}
+
+
+\section{References}
+\label{sec:ref}
+\begin{thebibliography}{}
+
+\bibitem{asSeq}
+Wei Sun, Vasyl Zhabotynsky (2013) {asSeq: A set of tools for the study of allele-specific RNA-seq data}. {\em http://www.bios.unc.edu/~weisun/software/asSeq.pdf}.
+
+\bibitem{CC12}
+Collaborative Cross Consortium (2012), {The Genome artichecture of the Collaborative Cross Mouse Genetic Reference Population.}, 
+{\em Genetics.} {\bf190}{(2)}:389-401
+
+\bibitem{Crowley13}
+Crowley, J. J.,  Zhabotynsky, V., Sun, W.,  Huang, S., Pakatci, I. K.,  Kim, Y., Wang, J. R.,  Morgan, A., P., Calaway, 
+J. D., Aylor, D. L., Yun, Z., Bell, T. A.,  Buus, R. J., Calaway, M. E., Didion, J. P., Gooch, T. J.,  Hansen, S. D.,  
+Robinson, N. N., Shaw, G. D., Spence, J. S.,  Quackenbush, C. R., Barrick, C. J., Xie, Y., Valdar, W.,  Lenarcic, A. B., 
+Wang, W., Welsh, C. E., Fu, C. P., Zhang, Z., Holt, J., Guo, Z.,  Threadgill, D. W., Tarantino, L. M., Miller, D., R., Zou, F., 
+McMillan, L.,  Sullivan, P. F.,  and Pardo-Manuel de Villena, F., (2015), {Analyses of allele-specific gene expression in highly divergent mouse crosses identifies pervasive allelic imbalance.}, {\em Nature genetics}, {\bf 47}{(4)}:353-360
+
+\bibitem{Lawrence13}
+Lawrence, M., Huber, W., Pages, H., Aboyoun, P., Carlson, M., Gentleman, R., Morgan, M.T. and Carey, V.J. (2013), {Software for computing and annotating genomic ranges.} {\em PLoS Comput Biol}, {\bf 9}{(8)}:p.e1003118
+
+\bibitem{Zou13}
+Zou, Fei, Wei Sun, James J. Crowley, Vasyl Zhabotynsky, Patrick F. Sullivan, and Fernando Pardo-Manuel de Villena (2014), {A novel statistical approach for jointly analyzing RNA-Seq data from F1 reciprocal crosses and inbred lines.} {\em Genetics} {\bf197}{(1)}:389-399
+\end{thebibliography}
+
+\end{document}
+cument}

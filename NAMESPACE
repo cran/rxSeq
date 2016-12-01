@@ -1,0 +1,17 @@
+# Import
+import(MASS)
+import(VGAM)
+import(numDeriv)
+
+importFrom("stats", "runif", "rbinom", "rnorm", "pchisq", "optim", "optimize", "median")
+
+# ------------------------------------------
+# Export directives.  
+# ------------------------------------------
+export(readCounts)
+
+export(process)
+export(nLogLik)
+
+export(get.tausB)
+export(simRX)
